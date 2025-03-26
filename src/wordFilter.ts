@@ -12,6 +12,23 @@ export interface WordSource {
   description: string;
 }
 
+// Word corpora URLs
+const WORD_CORPORA = {
+  // Google's 10000 most common English words
+  COMMON_WORDS: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
+  // Specialized corpus sources
+  NOUNS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/nouns.txt',
+  VERBS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/verbs.txt',
+  ADJECTIVES: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/adjectives.txt',
+  ADVERBS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/adverbs.txt',
+  // Additional sources
+  GSL_WORDS: 'https://raw.githubusercontent.com/openvocabulary/gsl/master/gsl.txt',
+  SCOWL_COMMON: 'https://raw.githubusercontent.com/en-wl/wordlist/master/scowl/final/english-words.35',
+  BNC_COMMON: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt',
+  // Fallout terminal hacking wordlist
+  FALLOUT_WORDS: 'https://raw.githubusercontent.com/bombcheck/Fallout.Terminal-Hacking/master/robco-industries/ajax/wordlist.txt'
+};
+
 export class WordFilter {
   private filter: Filter;
   private vowels = new Set(['a', 'e', 'i', 'o', 'u', 'y']);
@@ -24,9 +41,77 @@ export class WordFilter {
     'ae', // as in anaemia/anemia
     'oe', // as in oesophagus/esophagus
   ];
+  private wordCache: Map<string, string[]> = new Map();
 
   constructor() {
     this.filter = new Filter();
+    // Preload common words
+    this.preloadWordCache();
+  }
+
+  private async preloadWordCache(): Promise<void> {
+    try {
+      const commonWords = await this.fetchWordList(WORD_CORPORA.COMMON_WORDS);
+      this.wordCache.set('common', commonWords);
+    } catch (error) {
+      console.error('Failed to preload word cache:', error);
+    }
+  }
+
+  private async fetchWordList(url: string): Promise<string[]> {
+    // Check for cached response in localStorage first
+    const cacheKey = `wordlist_${url.split('/').pop()}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    
+    if (cachedData) {
+      try {
+        const { data, timestamp } = JSON.parse(cachedData);
+        // Cache is valid for 24 hours
+        if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+          console.log(`Using cached word list for ${url}`);
+          return data;
+        }
+      } catch (e) {
+        // If there's any error parsing the cached data, ignore and fetch fresh
+        console.warn('Error parsing cached data, fetching fresh');
+      }
+    }
+    
+    // Fetch from URL with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch word list: ${response.status}`);
+      }
+      
+      const text = await response.text();
+      const words = text.split(/\r?\n/)
+        .map(word => word.trim().toLowerCase())
+        .filter(word => word.length > 0 && /^[a-z]+$/.test(word));
+      
+      if (words.length === 0) {
+        throw new Error('No valid words found in the word list');
+      }
+      
+      // Cache the result
+      localStorage.setItem(cacheKey, JSON.stringify({
+        data: words,
+        timestamp: Date.now()
+      }));
+      
+      return words;
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError') {
+        throw new Error('Request timed out. Please try again later.');
+      }
+      throw fetchError;
+    }
   }
 
   private hasVowel(word: string): boolean {
@@ -99,24 +184,16 @@ export class WordFilter {
       return { isValid: false, reason: 'UK spelling variant' };
     }
 
-    if (this.isProperNoun(word)) {
-      return { isValid: false, reason: 'Proper noun' };
-    }
-
-    if (this.isPlaceName(word)) {
-      return { isValid: false, reason: 'Place name' };
-    }
-
-    const doc = nlp(word);
-    if (!doc.terms().some(t => t.isWord())) {
-      return { isValid: false, reason: 'Not a recognized word' };
-    }
-
     return { isValid: true };
   }
 
   getAvailableSources(): WordSource[] {
     return [
+      {
+        id: 'common',
+        name: 'Google Common Words',
+        description: 'Most frequently used words in American English from Google corpus'
+      },
       {
         id: 'nouns',
         name: 'Common Nouns',
@@ -129,43 +206,203 @@ export class WordFilter {
       },
       {
         id: 'adjectives',
-        name: 'Descriptive Words',
+        name: 'Adjectives',
         description: 'Words that describe qualities and characteristics'
+      },
+      {
+        id: 'adverbs',
+        name: 'Adverbs',
+        description: 'Words that modify verbs, adjectives, or other adverbs'
+      },
+      // Additional sources
+      {
+        id: 'gsl',
+        name: 'General Service List',
+        description: 'About 2,000 words for English language learners'
+      },
+      {
+        id: 'scowl',
+        name: 'SCOWL Common',
+        description: 'Common words from Spell Checker Oriented Word Lists'
+      },
+      {
+        id: 'bnc',
+        name: 'BNC Common Words',
+        description: 'Common words from the British National Corpus'
+      },
+      {
+        id: 'fallout',
+        name: 'Fallout Terminal Words',
+        description: 'Words from Fallout\'s terminal hacking minigame'
       }
     ];
   }
 
-  generateWords(length: number, source: string, count: number = 50): string[] {
-    let doc;
+  /**
+   * Helper method to fetch word list by source ID
+   */
+  private async fetchWordListBySource(source: string): Promise<string[]> {
+    // Check cache first
+    if (this.wordCache.has(source)) {
+      return this.wordCache.get(source) || [];
+    }
+    
+    // Determine the URL based on source
+    let url: string;
     switch (source) {
+      case 'common':
+        url = WORD_CORPORA.COMMON_WORDS;
+        break;
       case 'nouns':
-        doc = nlp('').nouns().json();
+        url = WORD_CORPORA.NOUNS;
         break;
       case 'verbs':
-        doc = nlp('').verbs().json();
+        url = WORD_CORPORA.VERBS;
         break;
       case 'adjectives':
-        doc = nlp('').adjectives().json();
+        url = WORD_CORPORA.ADJECTIVES;
+        break;
+      case 'adverbs':
+        url = WORD_CORPORA.ADVERBS;
+        break;
+      case 'gsl':
+        url = WORD_CORPORA.GSL_WORDS;
+        break;
+      case 'scowl':
+        url = WORD_CORPORA.SCOWL_COMMON;
+        break;
+      case 'bnc':
+        url = WORD_CORPORA.BNC_COMMON;
+        break;
+      case 'fallout':
+        url = WORD_CORPORA.FALLOUT_WORDS;
         break;
       default:
-        doc = nlp('').words().json();
+        url = WORD_CORPORA.COMMON_WORDS;
     }
+    
+    // Fetch the word list
+    const wordsList = await this.fetchWordList(url);
+    
+    // Cache the result
+    this.wordCache.set(source, wordsList);
+    
+    return wordsList;
+  }
 
-    const words = new Set<string>();
-    const allWords = doc
-      .map((term: any) => term.text.toLowerCase())
-      .filter((word: string) => 
-        word.length === length && 
-        this.validateWord(word).isValid
+  /**
+   * Generate words from a single source
+   * @param length Word length
+   * @param source Source ID
+   * @param count Maximum number of words to return
+   * @returns Array of words matching the criteria
+   */
+  async generateWords(length: number, source: string, count: number = 50): Promise<string[]> {
+    try {
+      let wordsList: string[] = [];
+      
+      // Fetch word list
+      wordsList = await this.fetchWordListBySource(source);
+
+      // Filter by length and validation
+      const validWords = wordsList.filter(word => 
+        word.length === length && this.validateWord(word).isValid
       );
 
-    while (words.size < count && allWords.length > 0) {
-      const randomIndex = Math.floor(Math.random() * allWords.length);
-      const word = allWords[randomIndex];
-      words.add(word);
-      allWords.splice(randomIndex, 1);
-    }
+      if (validWords.length === 0) {
+        throw new Error(`No valid words of length ${length} found in the selected source.`);
+      }
 
-    return Array.from(words);
+      // Randomly select up to 'count' words
+      const resultWords = new Set<string>();
+      const availableWords = [...validWords]; // Create a copy to avoid modifying the original
+      
+      // If we don't have enough words, return all valid ones
+      if (availableWords.length <= count) {
+        return availableWords;
+      }
+      
+      // Randomly select words without replacement
+      while (resultWords.size < count && availableWords.length > 0) {
+        const randomIndex = Math.floor(Math.random() * availableWords.length);
+        resultWords.add(availableWords[randomIndex]);
+        availableWords.splice(randomIndex, 1);
+      }
+
+      return Array.from(resultWords);
+    } catch (error) {
+      console.error('Error generating words:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate words from multiple sources
+   * @param length Word length
+   * @param sources Array of source IDs
+   * @param count Maximum number of words to return (default: 100)
+   * @returns Array of words matching the criteria
+   */
+  async generateWordsFromMultipleSources(length: number, sources: string[], count: number = 100): Promise<string[]> {
+    if (sources.length === 0) {
+      throw new Error('At least one word source must be selected');
+    }
+    
+    // Fetch and combine words from all selected sources
+    const allWords: Set<string> = new Set(); // Using a Set to avoid duplicates
+    const failedSources: string[] = [];
+    
+    try {
+      // Process each source
+      for (const source of sources) {
+        try {
+          const sourceWords = await this.fetchWordListBySource(source);
+          
+          // Filter words by length before adding to the set to improve performance
+          const validLengthWords = sourceWords.filter(word => word.length === length);
+          validLengthWords.forEach(word => allWords.add(word));
+          
+        } catch (error) {
+          console.error(`Error fetching words from source ${source}:`, error);
+          failedSources.push(source);
+          // Continue with other sources if one fails
+        }
+      }
+      
+      // Convert set back to array for further processing
+      let wordsArray = Array.from(allWords);
+      
+      // Filter by validation criteria
+      const validWords = wordsArray.filter(word => this.validateWord(word).isValid);
+
+      if (validWords.length === 0) {
+        if (failedSources.length === sources.length) {
+          throw new Error(`Could not fetch words from any of the selected sources. Please try again later.`);
+        } else {
+          throw new Error(`No valid words of length ${length} found in the selected sources.`);
+        }
+      }
+
+      // Randomly select up to 'count' words
+      const resultWords = new Set<string>();
+      const availableWords = [...validWords]; // Create a copy to avoid modifying the original
+      
+      // If we don't have enough words, return all valid ones
+      if (availableWords.length <= count) {
+        return availableWords;
+      }
+      
+      // Randomly select words without replacement
+      while (resultWords.size < count && availableWords.length > 0) {
+        const randomIndex = Math.floor(Math.random() * availableWords.length);
+        resultWords.add(availableWords[randomIndex]);
+        availableWords.splice(randomIndex, 1);
+      }
+
+      return Array.from(resultWords);
+    } catch (error) {
+      console.error('Error generating words from multiple sources:', error);
+      throw error;
+    }
   }
 }

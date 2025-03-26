@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@types/compromise": "^11.14.3",
     "bad-words": "^3.0.4",
     "compromise": "^14.12.0",
     "lucide-react": "^0.344.0",

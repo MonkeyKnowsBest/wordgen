@@ -12,21 +12,44 @@ export interface WordSource {
   description: string;
 }
 
-// Word corpora URLs - Updated with more reliable sources
+export interface WordGenerationResult {
+  words: string[];
+  failedSources: string[];
+}
+
+// Updated Word corpora URLs - Using reliable GitHub sources and adding fallbacks
 const WORD_CORPORA = {
-  // Google's 10000 most common English words
+  // Common words - Primary source
   COMMON_WORDS: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
-  // Specialized corpus sources - more reliable GitHub repos
-  NOUNS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/nouns.json',
-  VERBS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/verbs.json',
-  ADJECTIVES: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/adjectives.json',
-  ADVERBS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/adverbs.json',
-  // Additional sources
+  // Specialized corpus sources - Updated URLs and formats
+  NOUNS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
+  VERBS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
+  ADJECTIVES: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
+  ADVERBS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
+  // Additional sources - These sources are more reliable
   GSL_WORDS: 'https://raw.githubusercontent.com/openvocabulary/gsl/master/gsl.txt',
   SCOWL_COMMON: 'https://raw.githubusercontent.com/en-wl/wordlist/master/scowl/final/english-words.35',
   BNC_COMMON: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt',
-  // Fallout terminal hacking wordlist - updated to a more reliable source
   FALLOUT_WORDS: 'https://raw.githubusercontent.com/nathanlesage/academics/master/randomdata/fallout-terminal-words.txt'
+};
+
+// Word category patterns - Used for identifying word types in the fallback word list
+const WORD_CATEGORIES = {
+  NOUN_PATTERNS: [
+    /[^aeiou]tion$/, /ment$/, /ence$/, /ance$/, /ity$/, /ness$/,
+    /ship$/, /dom$/, /hood$/, /ism$/
+  ],
+  VERB_PATTERNS: [
+    /[aeiou]te$/, /ize$/, /ise$/, /ify$/, /ate$/,
+    /^re[^aeiou]/, /[aeiou]n$/, /[^aeiou]er$/
+  ],
+  ADJECTIVE_PATTERNS: [
+    /ful$/, /ous$/, /ive$/, /ble$/, /cal$/, /ary$/,
+    /ic$/, /al$/, /ish$/, /like$/, /ly$/
+  ],
+  ADVERB_PATTERNS: [
+    /ly$/ // Most common adverb pattern
+  ]
 };
 
 export class WordFilter {
@@ -42,6 +65,7 @@ export class WordFilter {
     'oe', // as in oesophagus/esophagus
   ];
   private wordCache: Map<string, string[]> = new Map();
+  private errorLog: Map<string, string> = new Map(); // Track specific error messages per source
 
   constructor() {
     this.filter = new Filter();
@@ -49,12 +73,19 @@ export class WordFilter {
     this.preloadWordCache();
   }
 
+  // Get error messages for debugging
+  getErrorLog(): Map<string, string> {
+    return this.errorLog;
+  }
+
   private async preloadWordCache(): Promise<void> {
     try {
       const commonWords = await this.fetchWordList(WORD_CORPORA.COMMON_WORDS);
       this.wordCache.set('common', commonWords);
+      console.log('Preloaded common words:', commonWords.length);
     } catch (error) {
       console.error('Failed to preload word cache:', error);
+      this.errorLog.set('common', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -79,55 +110,120 @@ export class WordFilter {
     
     // Fetch from URL with timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout (increased)
     
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      console.log(`Fetching word list from ${url}`);
+      const response = await fetch(url, { 
+        signal: controller.signal,
+        // Add headers to avoid caching issues
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
       clearTimeout(timeoutId);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch word list: ${response.status}`);
+        throw new Error(`Failed to fetch word list: ${response.status} ${response.statusText}`);
       }
       
       let text = await response.text();
       let words: string[] = [];
       
       // Handle JSON format for dariusk/corpora sources
-      if (url.includes('dariusk/corpora') && url.endsWith('.json')) {
+      if (url.endsWith('.json')) {
         try {
           const jsonData = JSON.parse(text);
-          // Different JSON formats based on the source
-          if (url.includes('nouns.json')) {
-            words = jsonData.nouns || [];
-          } else if (url.includes('verbs.json')) {
-            words = jsonData.verbs || [];
-          } else if (url.includes('adjectives.json')) {
-            words = jsonData.adjectives || [];
-          } else if (url.includes('adverbs.json')) {
-            words = jsonData.adverbs || [];
-          } else {
-            // Generic fallback
-            words = Array.isArray(jsonData) ? jsonData : 
-                   (jsonData.data || jsonData.words || []);
+          
+          // More flexible JSON parsing - try various property paths
+          if (Array.isArray(jsonData)) {
+            words = jsonData;
+          } else if (typeof jsonData === 'object') {
+            // Try various property paths that might contain word arrays
+            const possibleArrays = [
+              jsonData.nouns,
+              jsonData.verbs,
+              jsonData.adjectives,
+              jsonData.adverbs,
+              jsonData.words,
+              jsonData.data,
+              jsonData.items,
+              jsonData.values,
+              jsonData.content
+            ];
+            
+            for (const arr of possibleArrays) {
+              if (Array.isArray(arr) && arr.length > 0) {
+                words = arr;
+                break;
+              }
+            }
+            
+            // If nothing found, try to find any array property
+            if (words.length === 0) {
+              for (const key in jsonData) {
+                if (Array.isArray(jsonData[key]) && jsonData[key].length > 0) {
+                  words = jsonData[key];
+                  break;
+                }
+              }
+            }
+          }
+          
+          // If we still couldn't find any words
+          if (words.length === 0) {
+            throw new Error('Could not find word array in JSON');
           }
         } catch (jsonError) {
           console.error('Error parsing JSON:', jsonError);
-          throw new Error('Invalid JSON format in word list');
+          throw new Error(`Invalid JSON format in word list: ${jsonError.message}`);
         }
       } else {
-        // Plain text format
-        words = text.split(/\r?\n/)
-          .map(word => word.trim().toLowerCase())
-          .filter(word => word.length > 0);
+        // Plain text format - handle various formats
+        if (text.includes('\n')) {
+          // Line-separated format
+          words = text.split(/\r?\n/)
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else if (text.includes(',')) {
+          // Comma-separated format
+          words = text.split(',')
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else if (text.includes(' ')) {
+          // Space-separated format
+          words = text.split(/\s+/)
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else {
+          // Single word or unknown format
+          words = [text.trim().toLowerCase()];
+        }
       }
       
       // Filter to only include valid words (letters only)
       const filteredWords = words
-        .map(word => word.trim().toLowerCase())
+        .map(word => {
+          // Handle objects as well as strings
+          if (typeof word === 'object' && word !== null) {
+            // If it's an object, look for a word property
+            const wordProps = ['word', 'name', 'value', 'text'];
+            for (const prop of wordProps) {
+              if (typeof word[prop] === 'string') {
+                return word[prop].trim().toLowerCase();
+              }
+            }
+            return '';
+          }
+          return String(word).trim().toLowerCase();
+        })
         .filter(word => word.length > 0 && /^[a-z]+$/.test(word));
       
+      console.log(`Filtered ${words.length} words to ${filteredWords.length} valid words from ${url}`);
+      
       if (filteredWords.length === 0) {
-        throw new Error('No valid words found in the word list');
+        throw new Error(`No valid words found in the word list from ${url}`);
       }
       
       // Cache the result
@@ -139,6 +235,8 @@ export class WordFilter {
       return filteredWords;
     } catch (fetchError) {
       clearTimeout(timeoutId);
+      console.error(`Error fetching from ${url}:`, fetchError);
+      
       if (fetchError.name === 'AbortError') {
         throw new Error('Request timed out. Please try again later.');
       }
@@ -160,32 +258,32 @@ export class WordFilter {
     return maxCount >= word.length / 2;
   }
 
-private isAbbreviation(word: string): boolean {
-  // Enhanced abbreviation detection
-  
-  // Check for consonant-heavy words (potential acronyms)
-  const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
-  if (consonants > word.length * 0.7) {
-    return true;
-  }
-  
-  // Check for common abbreviation patterns
-  if (word.length <= 3 && consonants >= 2) {
-    return true;  // Short words with mostly consonants are likely abbreviations
-  }
-  
-  // Check for all caps words - simple approach for acronyms
-  if (word.toUpperCase() === word && word.length > 1) {
-    return true;
-  }
+  private isAbbreviation(word: string): boolean {
+    // Enhanced abbreviation detection
+    
+    // Check for consonant-heavy words (potential acronyms)
+    const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
+    if (consonants > word.length * 0.7) {
+      return true;
+    }
+    
+    // Check for common abbreviation patterns
+    if (word.length <= 3 && consonants >= 2) {
+      return true;  // Short words with mostly consonants are likely abbreviations
+    }
+    
+    // Check for all caps words - simple approach for acronyms
+    if (word.toUpperCase() === word && word.length > 1) {
+      return true;
+    }
 
-// Look for patterns where vowels are isolated between consonants
-  const vowelGroups = word.match(/[aeiouy]+/g) || [];
-  if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
-    return true;  // Words like "wtf", "omg" when spelled out
-  }
-  
-  return false;
+    // Look for patterns where vowels are isolated between consonants
+    const vowelGroups = word.match(/[aeiouy]+/g) || [];
+    if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
+      return true;  // Words like "wtf", "omg" when spelled out
+    }
+    
+    return false;
   }
 
   private hasUKSpelling(word: string): boolean {
@@ -202,6 +300,27 @@ private isAbbreviation(word: string): boolean {
   private isPlaceName(word: string): boolean {
     const doc = nlp(word);
     return doc.places().length > 0;
+  }
+
+  // Check if a word appears to be of a specific category
+  private detectWordCategory(word: string): {
+    isNoun: boolean;
+    isVerb: boolean;
+    isAdjective: boolean;
+    isAdverb: boolean;
+  } {
+    // Use word patterns to identify likely parts of speech
+    const isNoun = WORD_CATEGORIES.NOUN_PATTERNS.some(pattern => word.match(pattern));
+    const isVerb = WORD_CATEGORIES.VERB_PATTERNS.some(pattern => word.match(pattern));
+    const isAdjective = WORD_CATEGORIES.ADJECTIVE_PATTERNS.some(pattern => word.match(pattern));
+    const isAdverb = WORD_CATEGORIES.ADVERB_PATTERNS.some(pattern => word.match(pattern));
+    
+    return {
+      isNoun,
+      isVerb,
+      isAdjective,
+      isAdverb
+    };
   }
 
   validateWord(word: string): WordValidationResult {
@@ -348,13 +467,41 @@ private isAbbreviation(word: string): boolean {
         url = WORD_CORPORA.COMMON_WORDS;
     }
     
-    // Fetch the word list
-    const wordsList = await this.fetchWordList(url);
-    
-    // Cache the result
-    this.wordCache.set(source, wordsList);
-    
-    return wordsList;
+    try {
+      // Fetch the word list
+      const wordsList = await this.fetchWordList(url);
+      
+      // For fallback sources (like the general word list), filter by category
+      if ((source === 'nouns' || source === 'verbs' || source === 'adjectives' || source === 'adverbs') 
+          && url === WORD_CORPORA.NOUNS) {
+        // We're using a general word list - filter by detected category
+        const filteredWords = wordsList.filter(word => {
+          const categories = this.detectWordCategory(word);
+          switch (source) {
+            case 'nouns': return categories.isNoun;
+            case 'verbs': return categories.isVerb;
+            case 'adjectives': return categories.isAdjective;
+            case 'adverbs': return categories.isAdverb;
+            default: return true;
+          }
+        });
+        
+        console.log(`Filtered ${wordsList.length} general words to ${filteredWords.length} ${source}`);
+        
+        // Cache the result
+        this.wordCache.set(source, filteredWords);
+        return filteredWords;
+      }
+      
+      // Cache the regular result
+      this.wordCache.set(source, wordsList);
+      return wordsList;
+    } catch (error) {
+      console.error(`Error fetching words from source ${source}:`, error);
+      // Record the specific error for debugging
+      this.errorLog.set(source, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   /**
@@ -410,7 +557,11 @@ private isAbbreviation(word: string): boolean {
    * @param count Maximum number of words to return (default: 100)
    * @returns Object containing array of words and failed sources
    */
-  async generateWordsFromMultipleSources(length: number, sources: string[], count: number = 100): Promise<{words: string[], failedSources: string[]} | string[]> {
+  async generateWordsFromMultipleSources(
+    length: number, 
+    sources: string[], 
+    count: number = 100
+  ): Promise<WordGenerationResult> {
     if (sources.length === 0) {
       throw new Error('At least one word source must be selected');
     }
@@ -418,6 +569,7 @@ private isAbbreviation(word: string): boolean {
     // Fetch and combine words from all selected sources
     const allWords: Set<string> = new Set(); // Using a Set to avoid duplicates
     const failedSources: string[] = [];
+    const successSources: string[] = [];
     
     try {
       // Process each source
@@ -427,8 +579,15 @@ private isAbbreviation(word: string): boolean {
           
           // Filter words by length before adding to the set to improve performance
           const validLengthWords = sourceWords.filter(word => word.length === length);
-          validLengthWords.forEach(word => allWords.add(word));
           
+          if (validLengthWords.length > 0) {
+            validLengthWords.forEach(word => allWords.add(word));
+            successSources.push(source);
+            console.log(`Added ${validLengthWords.length} words from source ${source}`);
+          } else {
+            console.warn(`No words of length ${length} found in source ${source}`);
+            failedSources.push(source);
+          }
         } catch (error) {
           console.error(`Error fetching words from source ${source}:`, error);
           failedSources.push(source);
@@ -441,6 +600,7 @@ private isAbbreviation(word: string): boolean {
       
       // Filter by validation criteria
       const validWords = wordsArray.filter(word => this.validateWord(word).isValid);
+      console.log(`Filtered ${wordsArray.length} words to ${validWords.length} valid words`);
 
       if (validWords.length === 0) {
         if (failedSources.length === sources.length) {
@@ -477,5 +637,10 @@ private isAbbreviation(word: string): boolean {
       console.error('Error generating words from multiple sources:', error);
       throw error;
     }
+  }
+
+  // For debugging purposes - to see what's being loaded
+  getWordCache(): Map<string, string[]> {
+    return this.wordCache;
   }
 }

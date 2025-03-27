@@ -178,15 +178,15 @@ private isAbbreviation(word: string): boolean {
   if (word.toUpperCase() === word && word.length > 1) {
     return true;
   }
-  
-  // Look for patterns where vowels are isolated between consonants
+
+// Look for patterns where vowels are isolated between consonants
   const vowelGroups = word.match(/[aeiouy]+/g) || [];
   if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
     return true;  // Words like "wtf", "omg" when spelled out
   }
   
   return false;
-}
+  }
     
     // Look for patterns where vowels are isolated between consonants
     const vowelGroups = word.match(/[aeiouy]+/g) || [];

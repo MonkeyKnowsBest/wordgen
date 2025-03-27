@@ -12,21 +12,21 @@ export interface WordSource {
   description: string;
 }
 
-// Word corpora URLs
+// Word corpora URLs - Updated with more reliable sources
 const WORD_CORPORA = {
   // Google's 10000 most common English words
   COMMON_WORDS: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
-  // Specialized corpus sources
-  NOUNS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/nouns.txt',
-  VERBS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/verbs.txt',
-  ADJECTIVES: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/adjectives.txt',
-  ADVERBS: 'https://raw.githubusercontent.com/hugsy/stuff/main/random-word/adverbs.txt',
+  // Specialized corpus sources - more reliable GitHub repos
+  NOUNS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/nouns.json',
+  VERBS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/verbs.json',
+  ADJECTIVES: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/adjectives.json',
+  ADVERBS: 'https://raw.githubusercontent.com/dariusk/corpora/master/data/words/adverbs.json',
   // Additional sources
   GSL_WORDS: 'https://raw.githubusercontent.com/openvocabulary/gsl/master/gsl.txt',
   SCOWL_COMMON: 'https://raw.githubusercontent.com/en-wl/wordlist/master/scowl/final/english-words.35',
   BNC_COMMON: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt',
-  // Fallout terminal hacking wordlist
-  FALLOUT_WORDS: 'https://raw.githubusercontent.com/bombcheck/Fallout.Terminal-Hacking/master/robco-industries/ajax/wordlist.txt'
+  // Fallout terminal hacking wordlist - updated to a more reliable source
+  FALLOUT_WORDS: 'https://raw.githubusercontent.com/nathanlesage/academics/master/randomdata/fallout-terminal-words.txt'
 };
 
 export class WordFilter {
@@ -89,22 +89,54 @@ export class WordFilter {
         throw new Error(`Failed to fetch word list: ${response.status}`);
       }
       
-      const text = await response.text();
-      const words = text.split(/\r?\n/)
+      let text = await response.text();
+      let words: string[] = [];
+      
+      // Handle JSON format for dariusk/corpora sources
+      if (url.includes('dariusk/corpora') && url.endsWith('.json')) {
+        try {
+          const jsonData = JSON.parse(text);
+          // Different JSON formats based on the source
+          if (url.includes('nouns.json')) {
+            words = jsonData.nouns || [];
+          } else if (url.includes('verbs.json')) {
+            words = jsonData.verbs || [];
+          } else if (url.includes('adjectives.json')) {
+            words = jsonData.adjectives || [];
+          } else if (url.includes('adverbs.json')) {
+            words = jsonData.adverbs || [];
+          } else {
+            // Generic fallback
+            words = Array.isArray(jsonData) ? jsonData : 
+                   (jsonData.data || jsonData.words || []);
+          }
+        } catch (jsonError) {
+          console.error('Error parsing JSON:', jsonError);
+          throw new Error('Invalid JSON format in word list');
+        }
+      } else {
+        // Plain text format
+        words = text.split(/\r?\n/)
+          .map(word => word.trim().toLowerCase())
+          .filter(word => word.length > 0);
+      }
+      
+      // Filter to only include valid words (letters only)
+      const filteredWords = words
         .map(word => word.trim().toLowerCase())
         .filter(word => word.length > 0 && /^[a-z]+$/.test(word));
       
-      if (words.length === 0) {
+      if (filteredWords.length === 0) {
         throw new Error('No valid words found in the word list');
       }
       
       // Cache the result
       localStorage.setItem(cacheKey, JSON.stringify({
-        data: words,
+        data: filteredWords,
         timestamp: Date.now()
       }));
       
-      return words;
+      return filteredWords;
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name === 'AbortError') {
@@ -129,8 +161,32 @@ export class WordFilter {
   }
 
   private isAbbreviation(word: string): boolean {
+    // Enhanced abbreviation detection
+    
+    // Check for consonant-heavy words (potential acronyms)
     const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
-    return consonants > word.length * 0.7;
+    if (consonants > word.length * 0.7) {
+      return true;
+    }
+    
+    // Check for common abbreviation patterns
+    if (word.length <= 3 && consonants >= 2) {
+      return true;  // Short words with mostly consonants are likely abbreviations
+    }
+    
+    // Check for all caps words (via spelling) - heuristic for acronyms
+    const doc = nlp(word);
+    if (doc.terms().some(t => t.isAcronym())) {
+      return true;
+    }
+    
+    // Look for patterns where vowels are isolated between consonants
+    const vowelGroups = word.match(/[aeiouy]+/g) || [];
+    if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
+      return true;  // Words like "wtf", "omg" when spelled out
+    }
+    
+    return false;
   }
 
   private hasUKSpelling(word: string): boolean {
@@ -177,11 +233,23 @@ export class WordFilter {
     }
 
     if (this.isAbbreviation(word)) {
-      return { isValid: false, reason: 'Word appears to be an abbreviation' };
+      return { isValid: false, reason: 'Word appears to be an abbreviation or acronym' };
     }
 
     if (this.hasUKSpelling(word)) {
       return { isValid: false, reason: 'UK spelling variant' };
+    }
+
+    // Additional check: Filter out very uncommon combinations of letters
+    const uncommonPatterns = [
+      /[qwx]{2,}/, // Two or more q, w, or x in a row
+      /[jzx][jzx]/, // Two j, z, or x adjacent
+      /^[qwxzj]/, // Words starting with q, w, x, z, j (many are uncommon or proper nouns)
+      /^[^aeiouy]{3,}/ // Words starting with 3+ consonants (often abbreviations or non-English)
+    ];
+    
+    if (uncommonPatterns.some(pattern => word.match(pattern))) {
+      return { isValid: false, reason: 'Contains uncommon letter patterns' };
     }
 
     return { isValid: true };
@@ -341,9 +409,9 @@ export class WordFilter {
    * @param length Word length
    * @param sources Array of source IDs
    * @param count Maximum number of words to return (default: 100)
-   * @returns Array of words matching the criteria
+   * @returns Object containing array of words and failed sources
    */
-  async generateWordsFromMultipleSources(length: number, sources: string[], count: number = 100): Promise<string[]> {
+  async generateWordsFromMultipleSources(length: number, sources: string[], count: number = 100): Promise<{words: string[], failedSources: string[]} | string[]> {
     if (sources.length === 0) {
       throw new Error('At least one word source must be selected');
     }
@@ -389,7 +457,10 @@ export class WordFilter {
       
       // If we don't have enough words, return all valid ones
       if (availableWords.length <= count) {
-        return availableWords;
+        return {
+          words: availableWords,
+          failedSources
+        };
       }
       
       // Randomly select words without replacement
@@ -399,7 +470,10 @@ export class WordFilter {
         availableWords.splice(randomIndex, 1);
       }
 
-      return Array.from(resultWords);
+      return {
+        words: Array.from(resultWords),
+        failedSources
+      };
     } catch (error) {
       console.error('Error generating words from multiple sources:', error);
       throw error;

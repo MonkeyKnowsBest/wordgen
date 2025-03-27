@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, BookOpen, RefreshCw, Copy, CheckCircle2 } from 'lucide-react';
 import { WordFilter, WordSource } from './wordFilter';
+import SourceErrorIndicator from './SourceErrorIndicator';
 
 function App() {
   const [wordLength, setWordLength] = useState<number>(5);
@@ -8,6 +9,7 @@ function App() {
   const [generatedWords, setGeneratedWords] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failedSources, setFailedSources] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [displayMode, setDisplayMode] = useState<'scroll' | 'grid'>('scroll');
   const [wordFilter] = useState(() => new WordFilter());
@@ -28,6 +30,7 @@ function App() {
   const handleGenerate = async () => {
     setIsLoading(true);
     setError(null);
+    setFailedSources([]);
     
     try {
       // Ensure at least one source is selected
@@ -36,8 +39,14 @@ function App() {
       }
       
       // Generate words from selected sources
-      const words = await wordFilter.generateWordsFromMultipleSources(wordLength, selectedSources, 100);
-      setGeneratedWords(words);
+      const result = await wordFilter.generateWordsFromMultipleSources(wordLength, selectedSources, 100);
+      
+      // Check if we received failed sources info
+      if (result.failedSources && result.failedSources.length > 0) {
+        setFailedSources(result.failedSources);
+      }
+      
+      setGeneratedWords(result.words || result);
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
@@ -164,6 +173,12 @@ function App() {
                   ))}
                 </div>
               </div>
+              
+              {/* Source Error Indicator */}
+              <SourceErrorIndicator 
+                failedSources={failedSources} 
+                sources={sources} 
+              />
             </div>
 
             {/* Generate Button */}
@@ -305,18 +320,19 @@ function App() {
             </h2>
             <ul className="mt-2 text-sm text-gray-600 list-disc list-inside space-y-1">
               <li>All words are common English words (US spelling)</li>
-              <li>Words contain only letters</li>
+              <li>Words contain only letters (a-z)</li>
               <li>Each word contains at least one vowel (including 'y')</li>
               <li>No excessive letter repetition</li>
-              <li>No abbreviations or acronyms</li>
+              <li>No abbreviations, acronyms, or initialisms</li>
               <li>No proper names or place names</li>
               <li>No inappropriate or offensive words</li>
+              <li>No words with uncommon letter patterns</li>
             </ul>
           </div>
 
           <div className="mt-4 text-xs text-gray-500">
             Word lists are sourced from public linguistic corpora including common English words,
-            nouns, verbs, adjectives, and specialized collections.
+            verbs, adjectives, and specialized collections.
           </div>
         </div>
       </div>

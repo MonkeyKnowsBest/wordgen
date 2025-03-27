@@ -160,25 +160,34 @@ export class WordFilter {
     return maxCount >= word.length / 2;
   }
 
-  private isAbbreviation(word: string): boolean {
-    // Enhanced abbreviation detection
-    
-    // Check for consonant-heavy words (potential acronyms)
-    const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
-    if (consonants > word.length * 0.7) {
-      return true;
-    }
-    
-    // Check for common abbreviation patterns
-    if (word.length <= 3 && consonants >= 2) {
-      return true;  // Short words with mostly consonants are likely abbreviations
-    }
-    
-    // Check for all caps words (via spelling) - heuristic for acronyms
-    const doc = nlp(word);
-    if (doc.terms().some(t => t.isAcronym())) {
-      return true;
-    }
+private isAbbreviation(word: string): boolean {
+  // Enhanced abbreviation detection
+  
+  // Check for consonant-heavy words (potential acronyms)
+  const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
+  if (consonants > word.length * 0.7) {
+    return true;
+  }
+  
+  // Check for common abbreviation patterns
+  if (word.length <= 3 && consonants >= 2) {
+    return true;  // Short words with mostly consonants are likely abbreviations
+  }
+  
+  // Check for all caps words - compromise doesn't have isAcronym()
+  // So we'll use our own pattern matching instead
+  if (word.toUpperCase() === word && word.length > 1) {
+    return true;
+  }
+  
+  // Look for patterns where vowels are isolated between consonants
+  const vowelGroups = word.match(/[aeiouy]+/g) || [];
+  if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
+    return true;  // Words like "wtf", "omg" when spelled out
+  }
+  
+  return false;
+}
     
     // Look for patterns where vowels are isolated between consonants
     const vowelGroups = word.match(/[aeiouy]+/g) || [];

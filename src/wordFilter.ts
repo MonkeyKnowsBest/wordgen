@@ -17,23 +17,16 @@ export interface WordGenerationResult {
   failedSources: string[];
 }
 
-// Updated Word corpora URLs - Using reliable GitHub sources and adding fallbacks
+// Updated Word corpora URLs - Only using simple TXT format sources
 const WORD_CORPORA = {
-  // Common words - Primary source
+  // Primary sources - all TXT format
   COMMON_WORDS: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
-  // Specialized corpus sources - Updated URLs and formats
-  NOUNS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
-  VERBS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
-  ADJECTIVES: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
-  ADVERBS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt', // Fallback to a generic word list
-  // Additional sources - These sources are more reliable
-  GSL_WORDS: 'https://raw.githubusercontent.com/openvocabulary/gsl/master/gsl.txt',
-  SCOWL_COMMON: 'https://raw.githubusercontent.com/en-wl/wordlist/master/scowl/final/english-words.35',
-  BNC_COMMON: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt',
-  FALLOUT_WORDS: 'https://raw.githubusercontent.com/nathanlesage/academics/master/randomdata/fallout-terminal-words.txt'
+  ENABLE_WORDS: 'https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt', 
+  SCRABBLE_WORDS: 'https://raw.githubusercontent.com/redbo/scrabble/master/dictionary.txt',
+  UNIX_WORDS: 'https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt'
 };
 
-// Word category patterns - Used for identifying word types in the fallback word list
+// Word category patterns - Used for identifying word types
 const WORD_CATEGORIES = {
   NOUN_PATTERNS: [
     /[^aeiou]tion$/, /ment$/, /ence$/, /ance$/, /ity$/, /ness$/,
@@ -45,7 +38,7 @@ const WORD_CATEGORIES = {
   ],
   ADJECTIVE_PATTERNS: [
     /ful$/, /ous$/, /ive$/, /ble$/, /cal$/, /ary$/,
-    /ic$/, /al$/, /ish$/, /like$/, /ly$/
+    /ic$/, /al$/, /ish$/, /like$/
   ],
   ADVERB_PATTERNS: [
     /ly$/ // Most common adverb pattern
@@ -84,8 +77,17 @@ export class WordFilter {
       this.wordCache.set('common', commonWords);
       console.log('Preloaded common words:', commonWords.length);
     } catch (error) {
-      console.error('Failed to preload word cache:', error);
+      console.error('Failed to preload common words cache:', error);
       this.errorLog.set('common', error instanceof Error ? error.message : String(error));
+      
+      // Try the ENABLE list as a fallback
+      try {
+        const enableWords = await this.fetchWordList(WORD_CORPORA.ENABLE_WORDS);
+        this.wordCache.set('common', enableWords); // Use it as the common words source
+        console.log('Preloaded ENABLE words as fallback:', enableWords.length);
+      } catch (fallbackError) {
+        console.error('Failed to preload fallback word cache:', fallbackError);
+      }
     }
   }
 
@@ -97,8 +99,8 @@ export class WordFilter {
     if (cachedData) {
       try {
         const { data, timestamp } = JSON.parse(cachedData);
-        // Cache is valid for 24 hours
-        if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+        // Cache is valid for 7 days
+        if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
           console.log(`Using cached word list for ${url}`);
           return data;
         }
@@ -110,7 +112,7 @@ export class WordFilter {
     
     // Fetch from URL with timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout (increased)
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
     
     try {
       console.log(`Fetching word list from ${url}`);
@@ -131,93 +133,29 @@ export class WordFilter {
       let text = await response.text();
       let words: string[] = [];
       
-      // Handle JSON format for dariusk/corpora sources
-      if (url.endsWith('.json')) {
-        try {
-          const jsonData = JSON.parse(text);
-          
-          // More flexible JSON parsing - try various property paths
-          if (Array.isArray(jsonData)) {
-            words = jsonData;
-          } else if (typeof jsonData === 'object') {
-            // Try various property paths that might contain word arrays
-            const possibleArrays = [
-              jsonData.nouns,
-              jsonData.verbs,
-              jsonData.adjectives,
-              jsonData.adverbs,
-              jsonData.words,
-              jsonData.data,
-              jsonData.items,
-              jsonData.values,
-              jsonData.content
-            ];
-            
-            for (const arr of possibleArrays) {
-              if (Array.isArray(arr) && arr.length > 0) {
-                words = arr;
-                break;
-              }
-            }
-            
-            // If nothing found, try to find any array property
-            if (words.length === 0) {
-              for (const key in jsonData) {
-                if (Array.isArray(jsonData[key]) && jsonData[key].length > 0) {
-                  words = jsonData[key];
-                  break;
-                }
-              }
-            }
-          }
-          
-          // If we still couldn't find any words
-          if (words.length === 0) {
-            throw new Error('Could not find word array in JSON');
-          }
-        } catch (jsonError) {
-          console.error('Error parsing JSON:', jsonError);
-          throw new Error(`Invalid JSON format in word list: ${jsonError.message}`);
-        }
+      // Plain text format - handle various formats
+      if (text.includes('\n')) {
+        // Line-separated format (most common)
+        words = text.split(/\r?\n/)
+          .map(word => word.trim().toLowerCase())
+          .filter(word => word.length > 0);
+      } else if (text.includes(',')) {
+        // Comma-separated format
+        words = text.split(',')
+          .map(word => word.trim().toLowerCase())
+          .filter(word => word.length > 0);
+      } else if (text.includes(' ')) {
+        // Space-separated format
+        words = text.split(/\s+/)
+          .map(word => word.trim().toLowerCase())
+          .filter(word => word.length > 0);
       } else {
-        // Plain text format - handle various formats
-        if (text.includes('\n')) {
-          // Line-separated format
-          words = text.split(/\r?\n/)
-            .map(word => word.trim().toLowerCase())
-            .filter(word => word.length > 0);
-        } else if (text.includes(',')) {
-          // Comma-separated format
-          words = text.split(',')
-            .map(word => word.trim().toLowerCase())
-            .filter(word => word.length > 0);
-        } else if (text.includes(' ')) {
-          // Space-separated format
-          words = text.split(/\s+/)
-            .map(word => word.trim().toLowerCase())
-            .filter(word => word.length > 0);
-        } else {
-          // Single word or unknown format
-          words = [text.trim().toLowerCase()];
-        }
+        // Single word or unknown format
+        words = [text.trim().toLowerCase()];
       }
       
       // Filter to only include valid words (letters only)
       const filteredWords = words
-        .map(word => {
-          // Handle objects as well as strings
-          if (typeof word === 'object' && word !== null) {
-            // If it's an object, look for a word property
-            const wordProps = ['word', 'name', 'value', 'text'];
-            for (const prop of wordProps) {
-              if (typeof word[prop] === 'string') {
-                return word[prop].trim().toLowerCase();
-              }
-            }
-            return '';
-          }
-          return String(word).trim().toLowerCase();
-        })
         .filter(word => word.length > 0 && /^[a-z]+$/.test(word));
       
       console.log(`Filtered ${words.length} words to ${filteredWords.length} valid words from ${url}`);
@@ -271,11 +209,6 @@ export class WordFilter {
     if (word.length <= 3 && consonants >= 2) {
       return true;  // Short words with mostly consonants are likely abbreviations
     }
-    
-    // Check for all caps words - simple approach for acronyms
-    if (word.toUpperCase() === word && word.length > 1) {
-      return true;
-    }
 
     // Look for patterns where vowels are isolated between consonants
     const vowelGroups = word.match(/[aeiouy]+/g) || [];
@@ -290,16 +223,6 @@ export class WordFilter {
     return this.ukSpellingPatterns.some(pattern => 
       word.match(new RegExp(pattern, 'i'))
     );
-  }
-
-  private isProperNoun(word: string): boolean {
-    const doc = nlp(word);
-    return doc.terms().some(t => t.isProperNoun());
-  }
-
-  private isPlaceName(word: string): boolean {
-    const doc = nlp(word);
-    return doc.places().length > 0;
   }
 
   // Check if a word appears to be of a specific category
@@ -377,49 +300,43 @@ export class WordFilter {
     return [
       {
         id: 'common',
-        name: 'Google Common Words',
-        description: 'Most frequently used words in American English from Google corpus'
+        name: 'Common English Words',
+        description: 'Most frequently used words in American English'
+      },
+      {
+        id: 'enable',
+        name: 'ENABLE Word List',
+        description: 'Enhanced North American Benchmark Lexicon'
+      },
+      {
+        id: 'scrabble',
+        name: 'Scrabble Words',
+        description: 'Words allowed in Scrabble games'
+      },
+      {
+        id: 'unix',
+        name: 'UNIX Words',
+        description: 'Comprehensive dictionary from Linux/Unix systems'
       },
       {
         id: 'nouns',
         name: 'Common Nouns',
-        description: 'Everyday objects, concepts, and things'
+        description: 'Words for everyday objects and concepts (derived from general lists)'
       },
       {
         id: 'verbs',
         name: 'Action Verbs',
-        description: 'Words that describe actions and activities'
+        description: 'Words that describe actions and activities (derived from general lists)'
       },
       {
         id: 'adjectives',
         name: 'Adjectives',
-        description: 'Words that describe qualities and characteristics'
+        description: 'Words that describe qualities and characteristics (derived from general lists)'
       },
       {
         id: 'adverbs',
         name: 'Adverbs',
-        description: 'Words that modify verbs, adjectives, or other adverbs'
-      },
-      // Additional sources
-      {
-        id: 'gsl',
-        name: 'General Service List',
-        description: 'About 2,000 words for English language learners'
-      },
-      {
-        id: 'scowl',
-        name: 'SCOWL Common',
-        description: 'Common words from Spell Checker Oriented Word Lists'
-      },
-      {
-        id: 'bnc',
-        name: 'BNC Common Words',
-        description: 'Common words from the British National Corpus'
-      },
-      {
-        id: 'fallout',
-        name: 'Fallout Terminal Words',
-        description: 'Words from Fallout\'s terminal hacking minigame'
+        description: 'Words that modify verbs, adjectives, or other adverbs (derived from general lists)'
       }
     ];
   }
@@ -433,49 +350,47 @@ export class WordFilter {
       return this.wordCache.get(source) || [];
     }
     
-    // Determine the URL based on source
-    let url: string;
-    switch (source) {
-      case 'common':
-        url = WORD_CORPORA.COMMON_WORDS;
-        break;
-      case 'nouns':
-        url = WORD_CORPORA.NOUNS;
-        break;
-      case 'verbs':
-        url = WORD_CORPORA.VERBS;
-        break;
-      case 'adjectives':
-        url = WORD_CORPORA.ADJECTIVES;
-        break;
-      case 'adverbs':
-        url = WORD_CORPORA.ADVERBS;
-        break;
-      case 'gsl':
-        url = WORD_CORPORA.GSL_WORDS;
-        break;
-      case 'scowl':
-        url = WORD_CORPORA.SCOWL_COMMON;
-        break;
-      case 'bnc':
-        url = WORD_CORPORA.BNC_COMMON;
-        break;
-      case 'fallout':
-        url = WORD_CORPORA.FALLOUT_WORDS;
-        break;
-      default:
-        url = WORD_CORPORA.COMMON_WORDS;
-    }
-    
     try {
-      // Fetch the word list
-      const wordsList = await this.fetchWordList(url);
+      // Determine the URL based on source
+      let url: string;
+      let words: string[] = [];
+      let shouldFilter = false;
       
-      // For fallback sources (like the general word list), filter by category
-      if ((source === 'nouns' || source === 'verbs' || source === 'adjectives' || source === 'adverbs') 
-          && url === WORD_CORPORA.NOUNS) {
-        // We're using a general word list - filter by detected category
-        const filteredWords = wordsList.filter(word => {
+      switch (source) {
+        case 'common':
+          url = WORD_CORPORA.COMMON_WORDS;
+          break;
+        case 'enable':
+          url = WORD_CORPORA.ENABLE_WORDS;
+          break;
+        case 'scrabble':
+          url = WORD_CORPORA.SCRABBLE_WORDS;
+          break;
+        case 'unix':
+          url = WORD_CORPORA.UNIX_WORDS;
+          break;
+        case 'nouns':
+        case 'verbs': 
+        case 'adjectives':
+        case 'adverbs':
+          // For these categories, we'll use the ENABLE list and filter it
+          url = WORD_CORPORA.ENABLE_WORDS;
+          shouldFilter = true;
+          break;
+        default:
+          url = WORD_CORPORA.COMMON_WORDS;
+      }
+      
+      // Fetch the word list
+      words = await this.fetchWordList(url);
+      
+      // If this is a category that needs filtering
+      if (shouldFilter) {
+        // Try to get enable list from cache, or use the words we just fetched
+        const baseWords = this.wordCache.get('enable') || words;
+        
+        // Filter by category
+        words = baseWords.filter(word => {
           const categories = this.detectWordCategory(word);
           switch (source) {
             case 'nouns': return categories.isNoun;
@@ -486,21 +401,55 @@ export class WordFilter {
           }
         });
         
-        console.log(`Filtered ${wordsList.length} general words to ${filteredWords.length} ${source}`);
-        
-        // Cache the result
-        this.wordCache.set(source, filteredWords);
-        return filteredWords;
+        console.log(`Filtered ${baseWords.length} words to ${words.length} ${source}`);
       }
       
-      // Cache the regular result
-      this.wordCache.set(source, wordsList);
-      return wordsList;
+      // Cache the result
+      this.wordCache.set(source, words);
+      
+      // Clear any previous errors for this source
+      if (this.errorLog.has(source)) {
+        this.errorLog.delete(source);
+      }
+      
+      return words;
     } catch (error) {
       console.error(`Error fetching words from source ${source}:`, error);
+      
       // Record the specific error for debugging
       this.errorLog.set(source, error instanceof Error ? error.message : String(error));
-      throw error;
+      
+      // Try to fall back to common words if available
+      if (source !== 'common' && this.wordCache.has('common')) {
+        console.log(`Falling back to common words for ${source}`);
+        const commonWords = this.wordCache.get('common') || [];
+        
+        // For specialized categories, try to filter common words appropriately
+        if (['nouns', 'verbs', 'adjectives', 'adverbs'].includes(source)) {
+          const filtered = commonWords.filter(word => {
+            const categories = this.detectWordCategory(word);
+            switch (source) {
+              case 'nouns': return categories.isNoun;
+              case 'verbs': return categories.isVerb;
+              case 'adjectives': return categories.isAdjective;
+              case 'adverbs': return categories.isAdverb;
+              default: return true;
+            }
+          });
+          
+          if (filtered.length > 0) {
+            console.log(`Successfully created fallback for ${source} with ${filtered.length} words`);
+            this.wordCache.set(source, filtered);
+            return filtered;
+          }
+        }
+        
+        // If we couldn't filter or it's not a specialized category, just return common words
+        this.wordCache.set(source, commonWords);
+        return commonWords;
+      }
+      
+      throw error; // Re-throw if we couldn't recover
     }
   }
 

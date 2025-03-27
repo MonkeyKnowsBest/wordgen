@@ -188,14 +188,13 @@ private isAbbreviation(word: string): boolean {
   return false;
   }
     
-    // Look for patterns where vowels are isolated between consonants
-    const vowelGroups = word.match(/[aeiouy]+/g) || [];
-    if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
-      return true;  // Words like "wtf", "omg" when spelled out
-    }
-    
-    return false;
-  }
+// Look for patterns where vowels are isolated between consonants
+const vowelGroups = word.match(/[aeiouy]+/g) || [];
+if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
+  return true;  // Words like "wtf", "omg" when spelled out
+}
+
+return false;
 
   private hasUKSpelling(word: string): boolean {
     return this.ukSpellingPatterns.some(pattern => 

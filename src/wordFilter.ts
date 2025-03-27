@@ -174,8 +174,7 @@ private isAbbreviation(word: string): boolean {
     return true;  // Short words with mostly consonants are likely abbreviations
   }
   
-  // Check for all caps words - compromise doesn't have isAcronym()
-  // So we'll use our own pattern matching instead
+  // Check for all caps words - simple approach for acronyms
   if (word.toUpperCase() === word && word.length > 1) {
     return true;
   }

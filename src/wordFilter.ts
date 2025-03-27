@@ -188,8 +188,6 @@ private isAbbreviation(word: string): boolean {
   return false;
   }
 
-return false;
-
   private hasUKSpelling(word: string): boolean {
     return this.ukSpellingPatterns.some(pattern => 
       word.match(new RegExp(pattern, 'i'))

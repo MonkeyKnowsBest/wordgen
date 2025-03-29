@@ -1,5 +1,4 @@
 import Filter from 'bad-words';
-import nlp from 'compromise';
 
 export interface WordValidationResult {
   isValid: boolean;
@@ -17,74 +16,197 @@ export interface WordGenerationResult {
   failedSources: string[];
 }
 
-// Updated Word corpora URLs - Only using simple TXT format sources
-const WORD_CORPORA = {
-  // Primary sources - all TXT format
-  COMMON_WORDS: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
-  ENABLE_WORDS: 'https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt', 
-  SCRABBLE_WORDS: 'https://raw.githubusercontent.com/redbo/scrabble/master/dictionary.txt',
-  UNIX_WORDS: 'https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt'
+// Happy sources - sources of good words for the game
+const HAPPY_SOURCES = {
+  // Core word lists for general gameplay
+  GOOGLE_COMMON: 'https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-usa-no-swears.txt',
+  ENABLE: 'https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt',
+  SCRABBLE: 'https://raw.githubusercontent.com/redbo/scrabble/master/dictionary.txt',
+  
+  // Word frequency lists
+  WORD_FREQ: 'https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/en/en_50k.txt',
+  
+  // Simple words list
+  SIMPLE_WORDS: 'https://raw.githubusercontent.com/taikuukaits/SimpleWords/master/words.txt'
 };
 
-// Word category patterns - Used for identifying word types
-const WORD_CATEGORIES = {
-  NOUN_PATTERNS: [
-    /[^aeiou]tion$/, /ment$/, /ence$/, /ance$/, /ity$/, /ness$/,
-    /ship$/, /dom$/, /hood$/, /ism$/
-  ],
-  VERB_PATTERNS: [
-    /[aeiou]te$/, /ize$/, /ise$/, /ify$/, /ate$/,
-    /^re[^aeiou]/, /[aeiou]n$/, /[^aeiou]er$/
-  ],
-  ADJECTIVE_PATTERNS: [
-    /ful$/, /ous$/, /ive$/, /ble$/, /cal$/, /ary$/,
-    /ic$/, /al$/, /ish$/, /like$/
-  ],
-  ADVERB_PATTERNS: [
-    /ly$/ // Most common adverb pattern
-  ]
+// Sad sources - sources of problematic words to filter out
+const SAD_SOURCES = {
+  // Names
+  FIRST_NAMES: 'https://raw.githubusercontent.com/dominictarr/random-name/master/first-names.txt',
+  LAST_NAMES: 'https://raw.githubusercontent.com/arineng/arincli/master/lib/last-names.txt',
+  
+  // Places
+  COUNTRIES: 'https://raw.githubusercontent.com/umpirsky/country-list/master/data/en/country.txt',
+  CITIES: 'https://raw.githubusercontent.com/lutangar/cities.json/master/cities.json',
+  
+  // Technical and specialized terms
+  TECH_TERMS: 'https://raw.githubusercontent.com/words/technological-terms/master/index.txt',
+  MEDICAL_TERMS: 'https://raw.githubusercontent.com/glutanimate/wordlist-medicaleponyms-en/master/wordlist.txt',
+  CHEMICAL_ELEMENTS: 'https://gist.githubusercontent.com/GoodmanSciences/c2dd862cd38f21b0ad36b8f96b4bf1ee/raw/1d92663004489a5b6926e944c1b3d9ec5c40900e/Periodic%2520Table%2520of%2520Elements.csv',
+  
+  // Slang and internet terms
+  INTERNET_SLANG: 'https://raw.githubusercontent.com/both/language-dataset/master/data/internet-slang.json',
+  
+  // Abbreviations
+  ACRONYMS: 'https://raw.githubusercontent.com/stands4/acronym-list/master/acronyms.json'
 };
 
 export class WordFilter {
   private filter: Filter;
   private vowels = new Set(['a', 'e', 'i', 'o', 'u', 'y']);
-  private ukSpellingPatterns = [
-    'our', // as in colour/color
-    'ise', // as in realise/realize
-    'yse', // as in analyse/analyze
-    're$', // as in centre/center
-    'ogue$', // as in catalogue/catalog
-    'ae', // as in anaemia/anemia
-    'oe', // as in oesophagus/esophagus
-  ];
+  private problemWords: Set<string> = new Set();
   private wordCache: Map<string, string[]> = new Map();
-  private errorLog: Map<string, string> = new Map(); // Track specific error messages per source
+  private errorLog: Map<string, string> = new Map();
+  private problemWordsLoaded: boolean = false;
 
   constructor() {
     this.filter = new Filter();
+    
+    // Initialize problem words set from sad sources
+    this.loadProblemWords();
+    
     // Preload common words
     this.preloadWordCache();
   }
 
-  // Get error messages for debugging
-  getErrorLog(): Map<string, string> {
-    return this.errorLog;
+  private async loadProblemWords(): Promise<void> {
+    console.log('Loading problem words from sources...');
+    const promises = [];
+    
+    // Load from each sad source
+    for (const [key, url] of Object.entries(SAD_SOURCES)) {
+      promises.push(
+        this.fetchWordList(url)
+          .then(words => {
+            // Process each word list appropriately
+            let processedWords: string[] = [];
+            
+            if (key === 'CITIES' || key === 'COUNTRIES') {
+              // Split multi-word place names and extract individual words
+              processedWords = [];
+              words.forEach(place => {
+                place.split(/\s+/).forEach(word => {
+                  if (word.length >= 3 && /^[a-z]+$/.test(word)) {
+                    processedWords.push(word.toLowerCase());
+                  }
+                });
+              });
+            } else if (key === 'CHEMICAL_ELEMENTS' || key === 'INTERNET_SLANG' || key === 'ACRONYMS') {
+              // May need special processing for JSON or CSV formatted sources
+              processedWords = words.filter(word => word.length >= 3 && /^[a-z]+$/.test(word));
+            } else {
+              processedWords = words.filter(word => word.length >= 3 && /^[a-z]+$/.test(word));
+            }
+            
+            // Add to problem words set
+            processedWords.forEach(word => this.problemWords.add(word.toLowerCase()));
+            console.log(`Added ${processedWords.length} problem words from ${key}`);
+          })
+          .catch(error => {
+            console.error(`Error loading problem words from ${key}:`, error);
+          })
+      );
+    }
+    
+    // Add some manual problematic patterns
+    const addManualPatterns = () => {
+      // Add common nationality/ethnicity suffixes as patterns
+      const nationalitySuffixes = ['ese', 'ian', 'ish', 'ean', 'ese', 'ite', 'can', 'ani'];
+      for (const suffix of nationalitySuffixes) {
+        for (let i = 3; i <= 6; i++) { // Words of length 3-6 + suffix
+          // Generate sample words with this pattern and add to problem words
+          // This is just to catch common patterns not in our lists
+          const baseLetters = 'abcdefghijklmnoprstuvwxyz';
+          for (let j = 0; j < 5; j++) { // Add a few samples for each length
+            let base = '';
+            for (let k = 0; k < i; k++) {
+              base += baseLetters.charAt(Math.floor(Math.random() * baseLetters.length));
+            }
+            this.problemWords.add(base + suffix);
+          }
+        }
+      }
+      
+      // Add common technical suffixes
+      const technicalSuffixes = ['ium', 'ide', 'ate', 'ite', 'ene', 'ase', 'one', 'ane', 'ene', 'yne', 'ol', 'yl', 'ose'];
+      for (const suffix of technicalSuffixes) {
+        for (let i = 3; i <= 5; i++) {
+          const baseLetters = 'abcdefghijklmnoprstuvwxyz';
+          for (let j = 0; j < 3; j++) {
+            let base = '';
+            for (let k = 0; k < i; k++) {
+              base += baseLetters.charAt(Math.floor(Math.random() * baseLetters.length));
+            }
+            this.problemWords.add(base + suffix);
+          }
+        }
+      }
+      
+      // Add common place name endings
+      const placeSuffixes = ['land', 'ville', 'town', 'burg', 'berg', 'shire', 'port', 'ford', 'ham', 'ton'];
+      for (const suffix of placeSuffixes) {
+        for (let i = 3; i <= 5; i++) {
+          const baseLetters = 'abcdefghijklmnoprstuvwxyz';
+          for (let j = 0; j < 3; j++) {
+            let base = '';
+            for (let k = 0; k < i; k++) {
+              base += baseLetters.charAt(Math.floor(Math.random() * baseLetters.length));
+            }
+            this.problemWords.add(base + suffix);
+          }
+        }
+      }
+    };
+    
+    // Wait for all promises to resolve
+    await Promise.allSettled(promises);
+    
+    // Add manual patterns
+    addManualPatterns();
+    
+    console.log(`Total problem words loaded: ${this.problemWords.size}`);
+    this.problemWordsLoaded = true;
   }
 
   private async preloadWordCache(): Promise<void> {
     try {
-      const commonWords = await this.fetchWordList(WORD_CORPORA.COMMON_WORDS);
-      this.wordCache.set('common', commonWords);
-      console.log('Preloaded common words:', commonWords.length);
+      const commonWords = await this.fetchWordList(HAPPY_SOURCES.GOOGLE_COMMON);
+      
+      // Pre-filter the common words to improve quality
+      const filteredCommonWords = commonWords.filter(word => {
+        // Ensure word is 3-9 letters long
+        if (word.length < 3 || word.length > 9) return false;
+        
+        // Ensure word contains at least one vowel
+        if (!this.hasVowel(word)) return false;
+        
+        // Ensure word doesn't have excessive repetition
+        if (this.hasExcessiveRepetition(word)) return false;
+        
+        return true;
+      });
+      
+      this.wordCache.set('google_common', filteredCommonWords);
+      console.log('Preloaded Google common words:', filteredCommonWords.length);
     } catch (error) {
-      console.error('Failed to preload common words cache:', error);
-      this.errorLog.set('common', error instanceof Error ? error.message : String(error));
+      console.error('Failed to preload Google common words cache:', error);
+      this.errorLog.set('google_common', error instanceof Error ? error.message : String(error));
       
       // Try the ENABLE list as a fallback
       try {
-        const enableWords = await this.fetchWordList(WORD_CORPORA.ENABLE_WORDS);
-        this.wordCache.set('common', enableWords); // Use it as the common words source
-        console.log('Preloaded ENABLE words as fallback:', enableWords.length);
+        const enableWords = await this.fetchWordList(HAPPY_SOURCES.ENABLE);
+        
+        // Apply the same pre-filtering to the enable words
+        const filteredEnableWords = enableWords.filter(word => {
+          if (word.length < 3 || word.length > 9) return false;
+          if (!this.hasVowel(word)) return false;
+          if (this.hasExcessiveRepetition(word)) return false;
+          return true;
+        });
+        
+        this.wordCache.set('google_common', filteredEnableWords); // Use as fallback
+        console.log('Preloaded ENABLE words as fallback:', filteredEnableWords.length);
       } catch (fallbackError) {
         console.error('Failed to preload fallback word cache:', fallbackError);
       }
@@ -133,25 +255,65 @@ export class WordFilter {
       let text = await response.text();
       let words: string[] = [];
       
-      // Plain text format - handle various formats
-      if (text.includes('\n')) {
-        // Line-separated format (most common)
+      // Handle different file formats
+      if (url.endsWith('.json')) {
+        try {
+          // Try to parse JSON
+          const jsonData = JSON.parse(text);
+          
+          // Handle different JSON formats
+          if (Array.isArray(jsonData)) {
+            // If it's an array, extract words or names directly
+            words = jsonData.map(item => {
+              if (typeof item === 'string') return item;
+              if (typeof item === 'object' && item.name) return item.name;
+              if (typeof item === 'object' && item.word) return item.word;
+              if (typeof item === 'object' && item.term) return item.term;
+              if (typeof item === 'object' && item.acronym) return item.acronym;
+              return '';
+            }).filter(Boolean);
+          } else if (typeof jsonData === 'object') {
+            // If it's an object, extract values
+            words = Object.values(jsonData)
+              .map(item => typeof item === 'string' ? item : '')
+              .filter(Boolean);
+          }
+        } catch (e) {
+          console.error('Error parsing JSON:', e);
+          // Fall back to treating as text
+          words = text.split(/[\r\n]+/)
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        }
+      } else if (url.endsWith('.csv')) {
+        // Handle CSV format
         words = text.split(/\r?\n/)
-          .map(word => word.trim().toLowerCase())
-          .filter(word => word.length > 0);
-      } else if (text.includes(',')) {
-        // Comma-separated format
-        words = text.split(',')
-          .map(word => word.trim().toLowerCase())
-          .filter(word => word.length > 0);
-      } else if (text.includes(' ')) {
-        // Space-separated format
-        words = text.split(/\s+/)
-          .map(word => word.trim().toLowerCase())
+          .map(line => {
+            const parts = line.split(',');
+            return parts[0] || ''; // Take first column as the word
+          })
           .filter(word => word.length > 0);
       } else {
-        // Single word or unknown format
-        words = [text.trim().toLowerCase()];
+        // Text format handling
+        if (text.includes('\n')) {
+          // Line-separated format (most common)
+          words = text.split(/\r?\n/)
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else if (text.includes(',')) {
+          // Comma-separated format
+          words = text.split(',')
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else if (text.includes(' ')) {
+          // Space-separated format
+          words = text.split(/\s+/)
+            .map(word => word.trim().toLowerCase())
+            .filter(word => word.length > 0);
+        } else {
+          // Single word or unknown format
+          words = [text.trim().toLowerCase()];
+        }
       }
       
       // Filter to only include valid words (letters only)
@@ -182,68 +344,83 @@ export class WordFilter {
     }
   }
 
+  // Get error messages for debugging
+  getErrorLog(): Map<string, string> {
+    return this.errorLog;
+  }
+
+  // Get the word cache for debugging
+  getWordCache(): Map<string, string[]> {
+    return this.wordCache;
+  }
+
   private hasVowel(word: string): boolean {
     return word.split('').some(letter => this.vowels.has(letter));
   }
 
   private hasExcessiveRepetition(word: string): boolean {
+    // Count occurrences of each letter
     const letterCounts = new Map<string, number>();
     for (const letter of word) {
       letterCounts.set(letter, (letterCounts.get(letter) || 0) + 1);
     }
     
-    const maxCount = Math.max(...Array.from(letterCounts.values()));
-    return maxCount >= word.length / 2;
-  }
-
-  private isAbbreviation(word: string): boolean {
-    // Enhanced abbreviation detection
+    // Get the most frequent letter and its count
+    let maxChar = '';
+    let maxCount = 0;
+    letterCounts.forEach((count, char) => {
+      if (count > maxCount) {
+        maxCount = count;
+        maxChar = char;
+      }
+    });
     
-    // Check for consonant-heavy words (potential acronyms)
-    const consonants = word.split('').filter(c => !this.vowels.has(c)).length;
-    if (consonants > word.length * 0.7) {
+    // Check if any letter exceeds half the word length
+    if (maxCount > Math.floor(word.length / 2)) {
       return true;
     }
     
-    // Check for common abbreviation patterns
-    if (word.length <= 3 && consonants >= 2) {
-      return true;  // Short words with mostly consonants are likely abbreviations
-    }
-
-    // Look for patterns where vowels are isolated between consonants
-    const vowelGroups = word.match(/[aeiouy]+/g) || [];
-    if (vowelGroups.length >= 3 && vowelGroups.every(g => g.length === 1)) {
-      return true;  // Words like "wtf", "omg" when spelled out
+    // Rule: If half the letters are the same, another letter cannot appear more than once
+    if (maxCount >= Math.floor(word.length / 2)) {
+      // Check if any other letter appears more than once
+      let otherLetterMultiples = false;
+      letterCounts.forEach((count, char) => {
+        if (char !== maxChar && count > 1) {
+          otherLetterMultiples = true;
+        }
+      });
+      return otherLetterMultiples;
     }
     
     return false;
   }
 
-  private hasUKSpelling(word: string): boolean {
-    return this.ukSpellingPatterns.some(pattern => 
-      word.match(new RegExp(pattern, 'i'))
-    );
+  private hasUncommonLetterPatterns(word: string): boolean {
+    // Check for uncommon letter patterns
+    const uncommonPatterns = [
+      /[qwxz]{2,}/, // Two or more q, w, x, or z in a row
+      /[jzxq][jzxq]/, // Two j, z, x, or q adjacent
+      /^[qwxzj]/, // Words starting with q, w, x, z, j (many are uncommon or proper nouns)
+      /^[^aeiouy]{3,}/, // Words starting with 3+ consonants (often abbreviations or non-English)
+      /[^aeiouy]{4,}/ // Four or more consecutive consonants anywhere in the word
+    ];
+    
+    return uncommonPatterns.some(pattern => word.match(pattern));
   }
 
-  // Check if a word appears to be of a specific category
-  private detectWordCategory(word: string): {
-    isNoun: boolean;
-    isVerb: boolean;
-    isAdjective: boolean;
-    isAdverb: boolean;
-  } {
-    // Use word patterns to identify likely parts of speech
-    const isNoun = WORD_CATEGORIES.NOUN_PATTERNS.some(pattern => word.match(pattern));
-    const isVerb = WORD_CATEGORIES.VERB_PATTERNS.some(pattern => word.match(pattern));
-    const isAdjective = WORD_CATEGORIES.ADJECTIVE_PATTERNS.some(pattern => word.match(pattern));
-    const isAdverb = WORD_CATEGORIES.ADVERB_PATTERNS.some(pattern => word.match(pattern));
+  private isUKSpelling(word: string): boolean {
+    // Check for common UK spelling patterns
+    const ukPatterns = [
+      /our$/, // as in colour/color
+      /ise$/, // as in realise/realize
+      /yse$/, // as in analyse/analyze
+      /re$/, // as in centre/center
+      /ogue$/, // as in catalogue/catalog
+      /ae/, // as in anaemia/anemia
+      /oe/ // as in oesophagus/esophagus
+    ];
     
-    return {
-      isNoun,
-      isVerb,
-      isAdjective,
-      isAdverb
-    };
+    return ukPatterns.some(pattern => word.match(pattern));
   }
 
   validateWord(word: string): WordValidationResult {
@@ -253,6 +430,7 @@ export class WordFilter {
 
     word = word.toLowerCase().trim();
 
+    // Basic validation checks
     if (!word.match(/^[a-z]+$/)) {
       return { isValid: false, reason: 'Word must contain only letters' };
     }
@@ -261,35 +439,33 @@ export class WordFilter {
       return { isValid: false, reason: 'Word must be between 3 and 9 letters' };
     }
 
+    // Profanity check
     if (this.filter.isProfane(word)) {
       return { isValid: false, reason: 'Word is inappropriate' };
     }
 
+    // Vowel check
     if (!this.hasVowel(word)) {
       return { isValid: false, reason: 'Word must contain at least one vowel' };
     }
 
+    // Letter repetition check
     if (this.hasExcessiveRepetition(word)) {
-      return { isValid: false, reason: 'Word has too many repeated letters' };
+      return { isValid: false, reason: 'Word has problematic letter repetition' };
     }
 
-    if (this.isAbbreviation(word)) {
-      return { isValid: false, reason: 'Word appears to be an abbreviation or acronym' };
+    // Check against problem words list
+    if (this.problemWordsLoaded && this.problemWords.has(word)) {
+      return { isValid: false, reason: 'Word is in the problematic words list' };
     }
 
-    if (this.hasUKSpelling(word)) {
+    // UK spelling check
+    if (this.isUKSpelling(word)) {
       return { isValid: false, reason: 'UK spelling variant' };
     }
 
-    // Additional check: Filter out very uncommon combinations of letters
-    const uncommonPatterns = [
-      /[qwx]{2,}/, // Two or more q, w, or x in a row
-      /[jzx][jzx]/, // Two j, z, or x adjacent
-      /^[qwxzj]/, // Words starting with q, w, x, z, j (many are uncommon or proper nouns)
-      /^[^aeiouy]{3,}/ // Words starting with 3+ consonants (often abbreviations or non-English)
-    ];
-    
-    if (uncommonPatterns.some(pattern => word.match(pattern))) {
+    // Uncommon letter patterns check
+    if (this.hasUncommonLetterPatterns(word)) {
       return { isValid: false, reason: 'Contains uncommon letter patterns' };
     }
 
@@ -299,44 +475,29 @@ export class WordFilter {
   getAvailableSources(): WordSource[] {
     return [
       {
-        id: 'common',
-        name: 'Common English Words',
-        description: 'Most frequently used words in American English'
+        id: 'google_common',
+        name: 'Google Common Words',
+        description: 'Top 10,000 most frequently used words in American English'
       },
       {
         id: 'enable',
         name: 'ENABLE Word List',
-        description: 'Enhanced North American Benchmark Lexicon'
+        description: 'Enhanced North American Benchmark Lexicon (standard word game dictionary)'
       },
       {
         id: 'scrabble',
         name: 'Scrabble Words',
-        description: 'Words allowed in Scrabble games'
+        description: 'Words allowed in Scrabble games (filtered for common words)'
       },
       {
-        id: 'unix',
-        name: 'UNIX Words',
-        description: 'Comprehensive dictionary from Linux/Unix systems'
+        id: 'word_freq',
+        name: 'Word Frequency List',
+        description: 'Words sorted by frequency of usage in English'
       },
       {
-        id: 'nouns',
-        name: 'Common Nouns',
-        description: 'Words for everyday objects and concepts (derived from general lists)'
-      },
-      {
-        id: 'verbs',
-        name: 'Action Verbs',
-        description: 'Words that describe actions and activities (derived from general lists)'
-      },
-      {
-        id: 'adjectives',
-        name: 'Adjectives',
-        description: 'Words that describe qualities and characteristics (derived from general lists)'
-      },
-      {
-        id: 'adverbs',
-        name: 'Adverbs',
-        description: 'Words that modify verbs, adjectives, or other adverbs (derived from general lists)'
+        id: 'simple_words',
+        name: 'Simple English Words',
+        description: 'Basic vocabulary with common, easy-to-guess words'
       }
     ];
   }
@@ -351,58 +512,31 @@ export class WordFilter {
     }
     
     try {
-      // Determine the URL based on source
+      // Determine the URL based on source ID
       let url: string;
-      let words: string[] = [];
-      let shouldFilter = false;
       
       switch (source) {
-        case 'common':
-          url = WORD_CORPORA.COMMON_WORDS;
+        case 'google_common':
+          url = HAPPY_SOURCES.GOOGLE_COMMON;
           break;
         case 'enable':
-          url = WORD_CORPORA.ENABLE_WORDS;
+          url = HAPPY_SOURCES.ENABLE;
           break;
         case 'scrabble':
-          url = WORD_CORPORA.SCRABBLE_WORDS;
+          url = HAPPY_SOURCES.SCRABBLE;
           break;
-        case 'unix':
-          url = WORD_CORPORA.UNIX_WORDS;
+        case 'word_freq':
+          url = HAPPY_SOURCES.WORD_FREQ;
           break;
-        case 'nouns':
-        case 'verbs': 
-        case 'adjectives':
-        case 'adverbs':
-          // For these categories, we'll use the ENABLE list and filter it
-          url = WORD_CORPORA.ENABLE_WORDS;
-          shouldFilter = true;
+        case 'simple_words':
+          url = HAPPY_SOURCES.SIMPLE_WORDS;
           break;
         default:
-          url = WORD_CORPORA.COMMON_WORDS;
+          url = HAPPY_SOURCES.GOOGLE_COMMON;
       }
       
       // Fetch the word list
-      words = await this.fetchWordList(url);
-      
-      // If this is a category that needs filtering
-      if (shouldFilter) {
-        // Try to get enable list from cache, or use the words we just fetched
-        const baseWords = this.wordCache.get('enable') || words;
-        
-        // Filter by category
-        words = baseWords.filter(word => {
-          const categories = this.detectWordCategory(word);
-          switch (source) {
-            case 'nouns': return categories.isNoun;
-            case 'verbs': return categories.isVerb;
-            case 'adjectives': return categories.isAdjective;
-            case 'adverbs': return categories.isAdverb;
-            default: return true;
-          }
-        });
-        
-        console.log(`Filtered ${baseWords.length} words to ${words.length} ${source}`);
-      }
+      const words = await this.fetchWordList(url);
       
       // Cache the result
       this.wordCache.set(source, words);
@@ -419,32 +553,10 @@ export class WordFilter {
       // Record the specific error for debugging
       this.errorLog.set(source, error instanceof Error ? error.message : String(error));
       
-      // Try to fall back to common words if available
-      if (source !== 'common' && this.wordCache.has('common')) {
-        console.log(`Falling back to common words for ${source}`);
-        const commonWords = this.wordCache.get('common') || [];
-        
-        // For specialized categories, try to filter common words appropriately
-        if (['nouns', 'verbs', 'adjectives', 'adverbs'].includes(source)) {
-          const filtered = commonWords.filter(word => {
-            const categories = this.detectWordCategory(word);
-            switch (source) {
-              case 'nouns': return categories.isNoun;
-              case 'verbs': return categories.isVerb;
-              case 'adjectives': return categories.isAdjective;
-              case 'adverbs': return categories.isAdverb;
-              default: return true;
-            }
-          });
-          
-          if (filtered.length > 0) {
-            console.log(`Successfully created fallback for ${source} with ${filtered.length} words`);
-            this.wordCache.set(source, filtered);
-            return filtered;
-          }
-        }
-        
-        // If we couldn't filter or it's not a specialized category, just return common words
+      // Try to fall back to google_common if available
+      if (source !== 'google_common' && this.wordCache.has('google_common')) {
+        console.log(`Falling back to google_common words for ${source}`);
+        const commonWords = this.wordCache.get('google_common') || [];
         this.wordCache.set(source, commonWords);
         return commonWords;
       }
@@ -462,15 +574,23 @@ export class WordFilter {
    */
   async generateWords(length: number, source: string, count: number = 50): Promise<string[]> {
     try {
-      let wordsList: string[] = [];
+      // Make sure problem words are loaded
+      if (!this.problemWordsLoaded) {
+        await this.loadProblemWords();
+      }
       
       // Fetch word list
-      wordsList = await this.fetchWordListBySource(source);
+      let wordsList = await this.fetchWordListBySource(source);
 
-      // Filter by length and validation
-      const validWords = wordsList.filter(word => 
-        word.length === length && this.validateWord(word).isValid
-      );
+      // Filter by length
+      wordsList = wordsList.filter(word => word.length === length);
+      
+      if (wordsList.length === 0) {
+        throw new Error(`No words of length ${length} found in the selected source.`);
+      }
+      
+      // Filter by validation rules
+      const validWords = wordsList.filter(word => this.validateWord(word).isValid);
 
       if (validWords.length === 0) {
         throw new Error(`No valid words of length ${length} found in the selected source.`);
@@ -513,6 +633,11 @@ export class WordFilter {
   ): Promise<WordGenerationResult> {
     if (sources.length === 0) {
       throw new Error('At least one word source must be selected');
+    }
+    
+    // Make sure problem words are loaded
+    if (!this.problemWordsLoaded) {
+      await this.loadProblemWords();
     }
     
     // Fetch and combine words from all selected sources
@@ -586,10 +711,5 @@ export class WordFilter {
       console.error('Error generating words from multiple sources:', error);
       throw error;
     }
-  }
-
-  // For debugging purposes - to see what's being loaded
-  getWordCache(): Map<string, string[]> {
-    return this.wordCache;
   }
 }

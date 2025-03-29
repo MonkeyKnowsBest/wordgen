@@ -27,7 +27,22 @@ const HAPPY_SOURCES = {
   WORD_FREQ: 'https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/en/en_50k.txt',
   
   // Simple words list
-  SIMPLE_WORDS: 'https://raw.githubusercontent.com/taikuukaits/SimpleWords/master/words.txt'
+  SIMPLE_WORDS: 'https://raw.githubusercontent.com/taikuukaits/SimpleWords/master/words.txt',
+  
+  // Wordle-specific sources
+  WORDLE_ALLOWED: 'https://raw.githubusercontent.com/tabatkins/wordle-list/main/words',
+  WORDLE_ANSWERS: 'https://gist.githubusercontent.com/cfreshman/a03ef2cba789d8cf00c08f767e0fad7b/raw/a9e55d7e0c08100ce62133a1fa0d9c4f0f542f2c/wordle-answers-alphabetical.txt',
+  
+  // Wordnik's open source wordlist for game developers
+  WORDNIK: 'https://raw.githubusercontent.com/wordnik/wordlist/main/wordlist.txt',
+  
+  // Common English words from multiple sources (filtered)
+  COMMON_MULTI: 'https://raw.githubusercontent.com/skedwards88/word_lists/main/compiled/commonWords.json',
+  
+  // Additional lists from requested repositories
+  SINDRESORHUS: 'https://raw.githubusercontent.com/sindresorhus/word-list/main/words.txt',
+  POWERLANGUAGE: 'https://raw.githubusercontent.com/powerlanguage/word-lists/master/word-list-filtered.txt',
+  BROKENSANDALS: 'https://raw.githubusercontent.com/brokensandals/wordlists/master/common-5-letter-words.txt'
 };
 
 // Sad sources - sources of problematic words to filter out
@@ -49,7 +64,12 @@ const SAD_SOURCES = {
   INTERNET_SLANG: 'https://raw.githubusercontent.com/both/language-dataset/master/data/internet-slang.json',
   
   // Abbreviations
-  ACRONYMS: 'https://raw.githubusercontent.com/stands4/acronym-list/master/acronyms.json'
+  ACRONYMS: 'https://raw.githubusercontent.com/stands4/acronym-list/master/acronyms.json',
+  
+  // Uncommon/inappropriate words
+  UNCOMMON_WORDS: 'https://raw.githubusercontent.com/skedwards88/word_lists/main/compiled/uncommonWords.json',
+  OFFENSIVE_WORDS: 'https://raw.githubusercontent.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/master/en',
+  NON_US_WORDS: 'https://raw.githubusercontent.com/hyperreality/American-British-English-Translator/master/data/british_spellings.json'
 };
 
 export class WordFilter {
@@ -480,8 +500,28 @@ export class WordFilter {
         description: 'Top 10,000 most frequently used words in American English'
       },
       {
+        id: 'wordle_answers',
+        name: 'Wordle Answer Words',
+        description: 'Words that have been used as answers in the official Wordle game'
+      },
+      {
+        id: 'wordle_allowed',
+        name: 'Wordle Allowed Words',
+        description: 'All words accepted as valid guesses in Wordle'
+      },
+      {
+        id: 'wordnik',
+        name: 'Wordnik Game Words',
+        description: 'Curated list of words specifically for word games (from Wordnik)'
+      },
+      {
+        id: 'common_multi',
+        name: 'Multi-Source Common Words',
+        description: 'Common words verified across multiple dictionaries and sources'
+      },
+      {
         id: 'enable',
-        name: 'ENABLE Word List',
+        name: 'ENABLE Dictionary',
         description: 'Enhanced North American Benchmark Lexicon (standard word game dictionary)'
       },
       {
@@ -498,6 +538,21 @@ export class WordFilter {
         id: 'simple_words',
         name: 'Simple English Words',
         description: 'Basic vocabulary with common, easy-to-guess words'
+      },
+      {
+        id: 'sindresorhus',
+        name: 'Sindre Sorhus Word List',
+        description: 'Filtered list of English words with profanity removed'
+      },
+      {
+        id: 'powerlanguage',
+        name: 'Powerlanguage Word List',
+        description: 'Filtered list by Wordle creator - good for word games'
+      },
+      {
+        id: 'brokensandals',
+        name: '5-Letter Common Words',
+        description: 'Curated list of common 5-letter words ideal for word games'
       }
     ];
   }
@@ -530,6 +585,27 @@ export class WordFilter {
           break;
         case 'simple_words':
           url = HAPPY_SOURCES.SIMPLE_WORDS;
+          break;
+        case 'wordle_answers':
+          url = HAPPY_SOURCES.WORDLE_ANSWERS;
+          break;
+        case 'wordle_allowed':
+          url = HAPPY_SOURCES.WORDLE_ALLOWED;
+          break;
+        case 'wordnik':
+          url = HAPPY_SOURCES.WORDNIK;
+          break;
+        case 'common_multi':
+          url = HAPPY_SOURCES.COMMON_MULTI;
+          break;
+        case 'sindresorhus':
+          url = HAPPY_SOURCES.SINDRESORHUS;
+          break;
+        case 'powerlanguage':
+          url = HAPPY_SOURCES.POWERLANGUAGE;
+          break;
+        case 'brokensandals':
+          url = HAPPY_SOURCES.BROKENSANDALS;
           break;
         default:
           url = HAPPY_SOURCES.GOOGLE_COMMON;
